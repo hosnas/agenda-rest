@@ -28,6 +28,8 @@ const jobsReady = agenda._ready
   });
 
 const getJobMiddleware = (jobAssertion, jobOperation, errorCode = 400) => async (ctx, next) => {
+  if(ctx.request.headers['x-api-key'] != settings.appId || settings.appId == "")
+    ctx.throw(401, 'Unauthorized');
   const job = ctx.request.body || {};
   if (ctx.params.jobName) {
     job.name = ctx.params.jobName;
@@ -38,7 +40,21 @@ const getJobMiddleware = (jobAssertion, jobOperation, errorCode = 400) => async 
   await next();
 };
 
+const getJobMiddlewareBatch = (jobAssertion, jobOperation, errorCode = 400) => async (ctx, next) => {
+  if(ctx.request.headers['x-api-key'] != settings.appId || settings.appId == "")
+    ctx.throw(401, 'Unauthorized');
+  const job = ctx.request.body || {};
+  if (ctx.params.jobName) {
+    job.name = ctx.params.jobName;
+  }
+  const jobs = await jobsReady;
+  ctx.body = await promiseJobOperation(job, jobs, agenda, jobAssertion, jobOperation)
+    .catch(error => ctx.throw(errorCode, error));
+};
+
 const listJobs = async (ctx, next) => {
+  if(ctx.request.headers['x-api-key'] != settings.appId || settings.appId == "")
+    ctx.throw(401, 'Unauthorized');
   ctx.body = await jobsReady.then(jobs => jobs.toArray());
   await next();
 };
@@ -49,7 +65,6 @@ const runJobOnce = getJobMiddleware(jobAssertions.alreadyExists, jobOperations.o
 const runJobEvery = getJobMiddleware(jobAssertions.alreadyExists, jobOperations.every);
 const runJobNow = getJobMiddleware(jobAssertions.alreadyExists, jobOperations.now);
 const cancelJobs = getJobMiddleware(jobAssertions.doNotAssert, jobOperations.cancel);
-
 // Latest
 router.get('/api/job', listJobs);
 router.post('/api/job', createJob);
@@ -59,6 +74,17 @@ router.post('/api/job/once', runJobOnce);
 router.post('/api/job/every', runJobEvery);
 router.post('/api/job/now', runJobNow);
 router.post('/api/job/cancel', cancelJobs);
+router.post('/api/job/batch/once', async(ctx,next)=>{
+  const intervals=ctx.request.body.interval;
+  for(var i=0;i<intervals.length;i++){
+    let er=false;
+    ctx.request.body.interval=intervals[i];
+    await getJobMiddlewareBatch(jobAssertions.alreadyExists, jobOperations.once)(ctx,next)
+    .catch(error => {ctx.throw(400, error);er=true});
+    if(er)
+      break;
+  }
+});
 
 const redirect = (route, status = 307) => async (ctx, next) => {
   ctx.status = status;
